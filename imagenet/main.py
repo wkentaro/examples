@@ -14,14 +14,53 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 
 
+class ImageNetVal(torch.utils.data.Dataset):
+
+    data_dir = '/home/wkentaro/data/datasets/ImageNet/LSVRC2012/ILSVRC2012_img_val'
+
+    def __init__(self, transform=False):
+        self._transform = transform
+        label_file = '/home/wkentaro/data/datasets/ImageNet/LSVRC2012/ILSVRC2012_devkit_t12/data/ILSVRC2012_validation_ground_truth.txt'
+        self.labels = [int(l)-1 for l in open(label_file)]
+        self.files = [os.path.join(self.data_dir, f) for f in sorted(os.listdir(self.data_dir))]
+        assert len(self.labels) == len(self.files)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, i):
+        import numpy as np
+        import scipy.misc
+        import PIL.Image
+        file = self.files[i]
+        label = self.labels[i]
+        img = scipy.misc.imread(file)
+        if img.ndim == 2:
+            img = img[:, :, np.newaxis].repeat(3, axis=2)
+        if img.shape[2] == 4:
+            img = img[:, :, :3]
+        if self._transform:
+            img = PIL.Image.fromarray(img)
+            img = transforms.Scale(256)(img)
+            img = transforms.CenterCrop(224)(img)
+            img = np.array(img)
+            img = img[:, :, ::-1]
+            img = img.astype(np.float32)
+            img -= np.array([104.00698793, 116.66876762, 122.67891434])
+            img = img.transpose(2, 0, 1)
+            img = torch.Tensor(img).float()
+            return img, label
+        return img, label
+
+
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
 
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
+# parser.add_argument('data', metavar='DIR',
+#                     help='path to dataset')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                     choices=model_names,
                     help='model architecture: ' +
@@ -54,95 +93,100 @@ best_prec1 = 0
 
 
 def main():
-    global args, best_prec1
+    global args, best_prec1, model
     args = parser.parse_args()
 
-    # create model
-    if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
-    else:
-        print("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
-
-    if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
-        model.features = torch.nn.DataParallel(model.features)
-        model.cuda()
-    else:
-        model = torch.nn.DataParallel(model).cuda()
+    # # create model
+    # if args.pretrained:
+    #     print("=> using pre-trained model '{}'".format(args.arch))
+    #     model = models.__dict__[args.arch](pretrained=True)
+    # else:
+    #     print("=> creating model '{}'".format(args.arch))
+    #     model = models.__dict__[args.arch]()
+    #
+    # if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+    #     model.features = torch.nn.DataParallel(model.features)
+    #     model.cuda()
+    # else:
+    #     model = torch.nn.DataParallel(model).cuda()
+    model = models.vgg16(pretrained=False)
+    state_dict = torch.load('/home/wkentaro/data/models/torch/vgg16-from-caffe.pth')
+    model.load_state_dict(state_dict)
+    model = model.cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
-
-   # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
-    cudnn.benchmark = True
+   #  optimizer = torch.optim.SGD(model.parameters(), args.lr,
+   #                              momentum=args.momentum,
+   #                              weight_decay=args.weight_decay)
+   #
+   # # optionally resume from a checkpoint
+   #  if args.resume:
+   #      if os.path.isfile(args.resume):
+   #          print("=> loading checkpoint '{}'".format(args.resume))
+   #          checkpoint = torch.load(args.resume)
+   #          args.start_epoch = checkpoint['epoch']
+   #          best_prec1 = checkpoint['best_prec1']
+   #          model.load_state_dict(checkpoint['state_dict'])
+   #          optimizer.load_state_dict(checkpoint['optimizer'])
+   #          print("=> loaded checkpoint '{}' (epoch {})"
+   #                .format(args.resume, checkpoint['epoch']))
+   #      else:
+   #          print("=> no checkpoint found at '{}'".format(args.resume))
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
-    valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
-    train_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(traindir, transforms.Compose([
-            transforms.RandomSizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=True,
-        num_workers=args.workers, pin_memory=True)
+    # traindir = os.path.join(args.data, 'train')
+    # valdir = os.path.join(args.data, 'val')
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                                  std=[0.229, 0.224, 0.225])
+    #
+    # train_loader = torch.utils.data.DataLoader(
+    #     datasets.ImageFolder(traindir, transforms.Compose([
+    #         transforms.RandomSizedCrop(224),
+    #         transforms.RandomHorizontalFlip(),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ])),
+    #     batch_size=args.batch_size, shuffle=True,
+    #     num_workers=args.workers, pin_memory=True)
 
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Scale(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=True)
+        ImageNetVal(transform=True),
+        batch_size=256, shuffle=False,
+        num_workers=4, pin_memory=True)
+        # datasets.ImageFolder(valdir, transforms.Compose([
+        #     transforms.Scale(256),
+        #     transforms.CenterCrop(224),
+        #     transforms.ToTensor(),
+        #     normalize,
+        # ])),
+        # batch_size=args.batch_size, shuffle=False,
+        # num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
         validate(val_loader, model, criterion)
         return
 
-    for epoch in range(args.start_epoch, args.epochs):
-        adjust_learning_rate(optimizer, epoch)
-
-        # train for one epoch
-        train(train_loader, model, criterion, optimizer, epoch)
-
-        # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
-
-        # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'arch': args.arch,
-            'state_dict': model.state_dict(),
-            'best_prec1': best_prec1,
-            'optimizer' : optimizer.state_dict(),
-        }, is_best)
+    # for epoch in range(args.start_epoch, args.epochs):
+    #     adjust_learning_rate(optimizer, epoch)
+    #
+    #     # train for one epoch
+    #     train(train_loader, model, criterion, optimizer, epoch)
+    #
+    #     # evaluate on validation set
+    #     prec1 = validate(val_loader, model, criterion)
+    #
+    #     # remember best prec@1 and save checkpoint
+    #     is_best = prec1 > best_prec1
+    #     best_prec1 = max(prec1, best_prec1)
+    #     save_checkpoint({
+    #         'epoch': epoch + 1,
+    #         'arch': args.arch,
+    #         'state_dict': model.state_dict(),
+    #         'best_prec1': best_prec1,
+    #         'optimizer' : optimizer.state_dict(),
+    #     }, is_best)
 
 
 def train(train_loader, model, criterion, optimizer, epoch):
@@ -160,7 +204,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target.cuda(async=True)
+        input = input.cuda()
+        target = target.cuda()
         input_var = torch.autograd.Variable(input)
         target_var = torch.autograd.Variable(target)
 
@@ -205,7 +250,8 @@ def validate(val_loader, model, criterion):
 
     end = time.time()
     for i, (input, target) in enumerate(val_loader):
-        target = target.cuda(async=True)
+        input = input.cuda()
+        target = target.cuda()
         input_var = torch.autograd.Variable(input, volatile=True)
         target_var = torch.autograd.Variable(target, volatile=True)
 
